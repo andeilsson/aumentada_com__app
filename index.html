@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Hand Tracking App Launcher</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            /* Prevenir comportamentos indesejados no iOS */
+            position: fixed;
+            width: 100%;
+            height: 100%;
+        }
+
+        #input_video {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1;
+        }
+
+        #output_canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+            z-index: 2;
+        }
+
+        #debug_info {
+            position: fixed;
+            top: env(safe-area-inset-top, 10px);
+            left: 10px;
+            color: white;
+            z-index: 1000;
+            font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 8px;
+        }
+
+        .app-button {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            padding: 10px;
+            box-sizing: border-box;
+            z-index: 1000;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .app-button.active {
+            background: rgba(255, 255, 255, 1);
+            transform: scale(1.1);
+        }
+    </style>
+</head>
+<body>
+    <div id="debug_info">Iniciando sistema...</div>
+    <video id="input_video" playsinline webkit-playsinline autoplay muted></video>
+    <canvas id="output_canvas"></canvas>
+
+    <div id="app-buttons">
+        <img src="./whatsapp-icon.png.jpg" class="app-button" data-app="whatsapp" data-url="whatsapp://send" alt="WhatsApp" />
+        <img src="./instagram-icon.png.jpg" class="app-button" data-app="instagram" data-url="instagram://app" alt="Instagram" />
+        <img src="./facebook-icon.png.jpeg" class="app-button" data-app="facebook" data-url="fb://facewebmodal" alt="Facebook" />
+    </div>
+
+    <script>
+        const debugInfo = document.getElementById('debug_info');
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        let activeTimeout = null;
+        let camera = null;
+
+        function updateDebug(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            debugInfo.innerHTML = `${timestamp}: ${message}`;
+            console.log(`${timestamp}: ${message}`);
+        }
+
+        function updateCanvasSize() {
+            // Usar dimensões da janela para o canvas
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+            updateDebug('Canvas atualizado: ' + canvasElement.width + 'x' + canvasElement.height);
+        }
+
+        function setupButtons() {
+            const buttons = document.querySelectorAll('.app-button');
+            const centerY = window.innerHeight * 0.5;
+            const spacing = window.innerWidth / (buttons.length + 1);
+
+            buttons.forEach((button, index) => {
+                const x = spacing * (index + 1) - 30;
+                button.style.left = `${x}px`;
+                button.style.top = `${centerY - 30}px`;
+            });
+        }
+
+        function abrirApp(appName, url) {
+            updateDebug(`Abrindo ${appName}`);
+            window.location.href = url;
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 0,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults((results) => {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const finger = results.multiHandLandmarks[0][8];
+                const x = finger.x * canvasElement.width;
+                const y = finger.y * canvasElement.height;
+
+                canvasCtx.beginPath();
+                canvasCtx.arc(x, y, 10, 0, 2 * Math.PI);
+                canvasCtx.fillStyle = 'red';
+                canvasCtx.fill();
+
+                document.querySelectorAll('.app-button').forEach(button => {
+                    const rect = button.getBoundingClientRect();
+                    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+                        if (!button.classList.contains('active')) {
+                            button.classList.add('active');
+                            if (activeTimeout) clearTimeout(activeTimeout);
+                            activeTimeout = setTimeout(() => {
+                                abrirApp(button.dataset.app, button.dataset.url);
+                            }, 500);
+                        }
+                    } else {
+                        button.classList.remove('active');
+                        if (activeTimeout) clearTimeout(activeTimeout);
+                    }
+                });
+            }
+            canvasCtx.restore();
+        });
+
+        async function initCamera() {
+            try {
+                updateDebug('Solicitando câmera...');
+                
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: {
+                        facingMode: 'user',
+                        width: { ideal: window.innerWidth },
+                        height: { ideal: window.innerHeight }
+                    }
+                });
+
+                updateDebug('Câmera obtida, configurando vídeo...');
+                
+                videoElement.srcObject = stream;
+                videoElement.setAttribute('autoplay', '');
+                videoElement.setAttribute('playsinline', '');
+                videoElement.setAttribute('webkit-playsinline', '');
+                
+                // Garantir que o vídeo comece a reproduzir
+                const playPromise = videoElement.play();
+                if (playPromise !== undefined) {
+                    playPromise
+                        .then(() => {
+                            updateDebug('Vídeo iniciado com sucesso');
+                            // Iniciar o Camera Utils apenas depois que o vídeo estiver reproduzindo
+                            camera = new Camera(videoElement, {
+                                onFrame: async () => {
+                                    await hands.send({image: videoElement});
+                                },
+                                width: window.innerWidth,
+                                height: window.innerHeight
+                            });
+                            camera.start();
+                        })
+                        .catch(error => {
+                            updateDebug('Erro ao reproduzir vídeo: ' + error);
+                        });
+                }
+
+            } catch (error) {
+                updateDebug('Erro ao iniciar câmera: ' + error.message);
+                console.error('Erro detalhado:', error);
+            }
+        }
+
+        // Inicialização
+        window.addEventListener('load', () => {
+            updateDebug('Página carregada');
+            updateCanvasSize();
+            setupButtons();
+            
+            // Pequeno delay antes de iniciar a câmera (pode ajudar em alguns dispositivos)
+            setTimeout(initCamera, 1000);
+        });
+
+        // Atualizar quando a orientação mudar
+        window.addEventListener('resize', () => {
+            updateCanvasSize();
+            setupButtons();
+        });
+    </script>
+</body>
+</html>
